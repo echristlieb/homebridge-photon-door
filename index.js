@@ -1,218 +1,202 @@
-var http = require('http');
-var Accessory, Service, Characteristic, UUIDGen;
+var types = require("hap-nodejs/accessories/types.js");
+var request = require("request");
+
+var Service, Characteristic, Accessory;
 
 module.exports = function(homebridge) {
-  console.log("homebridge API version: " + homebridge.version);
-
-  // Accessory must be created from PlatformAccessory Constructor
-  Accessory = homebridge.platformAccessory;
-
-  // Service and Characteristic are from hap-nodejs
   Service = homebridge.hap.Service;
   Characteristic = homebridge.hap.Characteristic;
-  UUIDGen = homebridge.hap.uuid;
-  
-  // For platform plugin to be considered as dynamic platform plugin,
-  // registerPlatform(pluginName, platformName, constructor, dynamic), dynamic must be true
-  homebridge.registerPlatform("homebridge-samplePlatform", "SamplePlatform", SamplePlatform, true);
+  Accessory = homebridge.hap.Accessory;
+
+  homebridge.registerAccessory("homebridge-particle", "Particle", ParticleAccessory);
 }
 
-// Platform constructor
-// config may be null
-// api may be null if launched from old homebridge version
-function SamplePlatform(log, config, api) {
-  log("SamplePlatform Init");
-  var platform = this;
+function ParticleAccessory(log, config) {
   this.log = log;
-  this.config = config;
-  this.accessories = [];
 
-  this.requestServer = http.createServer(function(request, response) {
-    if (request.url === "/add") {
-      this.addAccessory(new Date().toISOString());
-      response.writeHead(204);
-      response.end();
-    }
+  // url info
+  this.platform_url = config['platform_url'];
+  this.device_id = config['device_id'];
+  this.access_token = config['access_token'];
 
-    if (request.url == "/reachability") {
-      this.updateAccessoriesReachability();
-      response.writeHead(204);
-      response.end();
-    }
-
-    if (request.url == "/remove") {
-      this.removeAccessory();
-      response.writeHead(204);
-      response.end();
-    }
-  }.bind(this));
-
-  this.requestServer.listen(18081, function() {
-    platform.log("Server Listening...");
-  });
-
-  if (api) {
-      // Save the API object as plugin needs to register new accessory via this object
-      this.api = api;
-
-      // Listen to event "didFinishLaunching", this means homebridge already finished loading cached accessories.
-      // Platform Plugin should only register new accessory that doesn't exist in homebridge after this event.
-      // Or start discover new accessories.
-      this.api.on('didFinishLaunching', function() {
-        platform.log("DidFinishLaunching");
-      }.bind(this));
-  }
+  // device info
+  this.name = config['name'];
 }
 
-// Function invoked when homebridge tries to restore cached accessory.
-// Developer can configure accessory at here (like setup event handler).
-// Update current value.
-SamplePlatform.prototype.configureAccessory = function(accessory) {
-  this.log(accessory.displayName, "Configure Accessory");
-  var platform = this;
+ParticleAccessory.prototype = {
 
-  // Set the accessory to reachable if plugin can currently process the accessory,
-  // otherwise set to false and update the reachability later by invoking 
-  // accessory.updateReachability()
-  accessory.reachable = true;
+  httpRequest: function(url, method, data, callback) {
+    request({
+      url: url,
+      form: data,
+      method: method
+    },
+    function (error, response, body) {
+      callback(error, response, body)
+    })
+  },
 
-  accessory.on('identify', function(paired, callback) {
-    platform.log(accessory.displayName, "Identify!!!");
-    callback();
-  });
+  deviceUrl: function(platform_url, device_id) {
+    return platform_url+'/devices/'+device_id;
+  },
 
-  if (accessory.getService(Service.Lightbulb)) {
-    accessory.getService(Service.Lightbulb)
-    .getCharacteristic(Characteristic.On)
-    .on('set', function(value, callback) {
-      platform.log(accessory.displayName, "Light -> " + value);
-      callback();
+  functionUrl: function(name, device_url) {
+    return device_url+'/'+name;
+  },
+
+  setCharacteristic: function(name, value) {
+    var device_url = this.deviceUrl(this.platform_url, this.device_id);
+    var function_url = this.functionUrl(name, device_url);
+
+    console.log('Calling function ' + name + ' with value ' + value + '.');
+
+    var request_data = {'value' : value, 'access_token': this.access_token};
+
+    this.httpRequest(function_url, "POST", request_data, function(error, response, body) {
+      if (error) {
+        console.error('Http request for function ' + name + ' failed:', error);
+      } else {
+        console.log('Http request for function ' + name + ' succeeded.');
+      }
     });
-  }
+  },
 
-  this.accessories.push(accessory);
-}
-
-// Handler will be invoked when user try to config your plugin.
-// Callback can be cached and invoke when necessary.
-SamplePlatform.prototype.configurationRequestHandler = function(context, request, callback) {
-  this.log("Context: ", JSON.stringify(context));
-  this.log("Request: ", JSON.stringify(request));
-
-  // Check the request response
-  if (request && request.response && request.response.inputs && request.response.inputs.name) {
-    this.addAccessory(request.response.inputs.name);
-
-    // Invoke callback with config will let homebridge save the new config into config.json
-    // Callback = function(response, type, replace, config)
-    // set "type" to platform if the plugin is trying to modify platforms section
-    // set "replace" to true will let homebridge replace existing config in config.json
-    // "config" is the data platform trying to save
-    callback(null, "platform", true, {"platform":"SamplePlatform", "otherConfig":"SomeData"});
-    return;
-  }
-
-  // - UI Type: Input
-  // Can be used to request input from user
-  // User response can be retrieved from request.response.inputs next time
-  // when configurationRequestHandler being invoked
-
-  var respDict = {
-    "type": "Interface",
-    "interface": "input",
-    "title": "Add Accessory",
-    "items": [
+  getServices: function() {
+    var that = this;
+    return [{
+      sType: types.ACCESSORY_INFORMATION_STYPE,
+      characteristics: [{
+        cType: types.NAME_CTYPE,
+        onUpdate: null,
+        perms: ["pr"],
+        format: "string",
+        initialValue: this.name,
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Name of the accessory",
+        designedMaxLength: 255
+      },
       {
-        "id": "name",
-        "title": "Name",
-        "placeholder": "Fancy Light"
-      }//, 
-      // {
-      //   "id": "pw",
-      //   "title": "Password",
-      //   "secure": true
-      // }
-    ]
+        cType: types.MANUFACTURER_CTYPE,
+        onUpdate: null,
+        perms: ["pr"],
+        format: "string",
+        initialValue: "Http",
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Manufacturer",
+        designedMaxLength: 255
+      },
+      {
+        cType: types.MODEL_CTYPE,
+        onUpdate: null,
+        perms: ["pr"],
+        format: "string",
+        initialValue: "Rev-1",
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Model",
+        designedMaxLength: 255
+      },
+      {
+        cType: types.SERIAL_NUMBER_CTYPE,
+        onUpdate: null,
+        perms: ["pr"],
+        format: "string",
+        initialValue: "A1S2NASF88EW",
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "SN",
+        designedMaxLength: 255
+      },
+      {
+        cType: types.IDENTIFY_CTYPE,
+        onUpdate: null,
+        perms: ["pw"],
+        format: "bool",
+        initialValue: false,
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Identify Accessory",
+        designedMaxLength: 1
+      }]
+    },
+    {
+      sType: types.LIGHTBULB_STYPE,
+      characteristics: [{
+        cType: types.NAME_CTYPE,
+        onUpdate: null,
+        perms: ["pr"],
+        format: "string",
+        initialValue: this.name,
+        supportEvents: true,
+        supportBonjour: false,
+        manfDescription: "Name of service",
+        designedMaxLength: 255
+      },
+      {
+        cType: types.POWER_STATE_CTYPE,
+        onUpdate: function(value) {
+          that.setCharacteristic("powerState", value ? 1 : 0);
+        },
+        perms: ["pw","pr","ev"],
+        format: "bool",
+        initialValue: 1,
+        supportEvents: true,
+        supportBonjour: false,
+        manfDescription: "Change the power state",
+        designedMaxLength: 1
+      },
+      {
+        cType: types.HUE_CTYPE,
+        onUpdate: function(value) {
+          that.setCharacteristic("hue", value);
+        },
+        perms: ["pw","pr","ev"],
+        format: "int",
+        initialValue: 100,
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Adjust Hue of Light",
+        designedMinValue: 0,
+        designedMaxValue: 100,
+        designedMinStep: 1,
+        unit: "%"
+      },
+      {
+        cType: types.SATURATION_CTYPE,
+        onUpdate: function(value) {
+          that.setCharacteristic("saturation", value);
+        },
+        perms: ["pw","pr","ev"],
+        format: "int",
+        initialValue: 100,
+        supportEvents: false,
+        supportBonjour: false,
+        manfDescription: "Adjust Saturation of Light",
+        designedMinValue: 0,
+        designedMaxValue: 100,
+        designedMinStep: 1,
+        unit: "%"
+      },
+      {
+        cType: types.BRIGHTNESS_CTYPE,
+        onUpdate: function(value) {
+          that.setCharacteristic("brightness", value);
+        },
+        perms: ["pw","pr","ev"],
+        format: "int",
+        initialValue:  0,
+        supportEvents: true,
+        supportBonjour: false,
+        manfDescription: "Adjust Brightness",
+        designedMinValue: 0,
+        designedMaxValue: 100,
+        designedMinStep: 1,
+        unit: "%"
+      }]
+    }];
   }
+};
 
-  // - UI Type: List
-  // Can be used to ask user to select something from the list
-  // User response can be retrieved from request.response.selections next time
-  // when configurationRequestHandler being invoked
-
-  // var respDict = {
-  //   "type": "Interface",
-  //   "interface": "list",
-  //   "title": "Select Something",
-  //   "allowMultipleSelection": true,
-  //   "items": [
-  //     "A","B","C"
-  //   ]
-  // }
-
-  // - UI Type: Instruction
-  // Can be used to ask user to do something (other than text input)
-  // Hero image is base64 encoded image data. Not really sure the maximum length HomeKit allows.
-
-  // var respDict = {
-  //   "type": "Interface",
-  //   "interface": "instruction",
-  //   "title": "Almost There",
-  //   "detail": "Please press the button on the bridge to finish the setup.",
-  //   "heroImage": "base64 image data",
-  //   "showActivityIndicator": true,
-  // "showNextButton": true,
-  // "buttonText": "Login in browser",
-  // "actionURL": "https://google.com"
-  // }
-
-  // Plugin can set context to allow it track setup process
-  context.ts = "Hello";
-
-  // Invoke callback to update setup UI
-  callback(respDict);
-}
-
-// Sample function to show how developer can add accessory dynamically from outside event
-SamplePlatform.prototype.addAccessory = function(accessoryName) {
-  this.log("Add Accessory");
-  var platform = this;
-  var uuid;
-
-  uuid = UUIDGen.generate(accessoryName);
-
-  var newAccessory = new Accessory(accessoryName, uuid);
-  newAccessory.on('identify', function(paired, callback) {
-    platform.log(accessory.displayName, "Identify!!!");
-    callback();
-  });
-  // Plugin can save context on accessory to help restore accessory in configureAccessory()
-  // newAccessory.context.something = "Something"
-  
-  // Make sure you provided a name for service, otherwise it may not visible in some HomeKit apps
-  newAccessory.addService(Service.Lightbulb, "Test Light")
-  .getCharacteristic(Characteristic.On)
-  .on('set', function(value, callback) {
-    platform.log(accessory.displayName, "Light -> " + value);
-    callback();
-  });
-
-  this.accessories.push(newAccessory);
-  this.api.registerPlatformAccessories("homebridge-samplePlatform", "SamplePlatform", [newAccessory]);
-}
-
-SamplePlatform.prototype.updateAccessoriesReachability = function() {
-  this.log("Update Reachability");
-  for (var index in this.accessories) {
-    var accessory = this.accessories[index];
-    accessory.updateReachability(false);
-  }
-}
-
-// Sample function to show how developer can remove accessory dynamically from outside event
-SamplePlatform.prototype.removeAccessory = function() {
-  this.log("Remove Accessory");
-  this.api.unregisterPlatformAccessories("homebridge-samplePlatform", "SamplePlatform", this.accessories);
-
-  this.accessories = [];
-}
+module.exports.accessory = ParticleAccessory;
