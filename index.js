@@ -8,7 +8,7 @@ module.exports = function(homebridge) {
   Characteristic = homebridge.hap.Characteristic;
   Accessory = homebridge.hap.Accessory;
 
-  homebridge.registerAccessory("homebridge-particle", "Particle", ParticleAccessory);
+  homebridge.registerAccessory("homebridge-photon-door", "Particle", ParticleAccessory);
 }
 
 function ParticleAccessory(log, config) {
