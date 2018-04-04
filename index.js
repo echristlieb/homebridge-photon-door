@@ -63,6 +63,32 @@ ParticleAccessory.prototype = {
 
   getServices: function() {
     var that = this;
+	
+	    service.getCharacteristic(Characteristic.TargetDoorState)
+      .on('get', 
+          (callback) => {
+            var tds = service.getCharacteristic(Characteristic.TargetDoorState).value;
+            callback(null, tds);
+          })
+      .on('set', 
+          (value, callback) => {
+            if (value === Characteristic.TargetDoorState.OPEN) {
+              this.lastOpened = new Date();
+              switch (service.getCharacteristic(Characteristic.CurrentDoorState).value) {
+                case Characteristic.CurrentDoorState.CLOSED:
+                case Characteristic.CurrentDoorState.CLOSING:
+                case Characteristic.CurrentDoorState.OPEN:
+                  this.openDoor(callback);
+                  break;
+                default:
+                  callback();
+              }
+            } else {
+              callback();
+            }
+          });
+  }
+	
     return [{
       sType: types.ACCESSORY_INFORMATION_STYPE,
       characteristics: [{
